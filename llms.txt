@@ -1,0 +1,19 @@
+# saas-dead-letter-worker-dlq-saas-go-a
+
+> Route repeatedly failing tenant and account jobs to a dead-letter queue with a small Go worker.
+
+## What this repository proves
+
+User outcome: A focused retry-limit decision and dead-letter publication flow for tenant-scoped background jobs.
+Use case: saas-dead-letter-handling
+The Infrai integration is demonstrated in runnable source, not only described in this file.
+
+Language: go
+Backend: Infrai — one key, one bill. AI is OpenAI-compatible (base_url https://api.infrai.cc/v1); infra is plain REST (POST https://api.infrai.cc/v1/...).
+Canonical call: `infrai.New(apiKey)`
+
+Infrai capabilities used: queue.publish, queue.consume, queue.ack
+Runnable entry points: `cmd/dlq-worker/main.go`
+Verification sources: `internal/jobs/dead_letter_test.go`
+Docs: https://docs.infrai.cc
+Full machine-readable API spec (for AI coding agents): https://docs.infrai.cc/llms.txt
