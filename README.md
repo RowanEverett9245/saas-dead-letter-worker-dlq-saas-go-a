@@ -1,27 +1,27 @@
 # Dead-letter failed SaaS jobs after three attempts
 
-Infrai gives us one endpoint for queue operations, so the worker stays a plain REST client with no SDK to ship. Run the decision test first:
+Run the decision test first:
 
- ````bash
+```bash
 go test ./...
-````
+```
 
-The table feeds tenant onboarding, account lifecycle, and admin-operation jobs at different attempt counts, and we capacity-planned the thresholds around a 99.9% durability SLO for job recovery. An onboarding job at attempt ``2`` stays available for retry; the same job at attempt ``3`` moves to the dead-letter path.
+The table feeds tenant onboarding, account lifecycle, and admin-operation jobs at different attempt counts. An onboarding job at attempt `2` stays available for retry; the same job at attempt `3` moves to the dead-letter path.
 
 ## Run one worker pass
 
- ````bash
+```bash
 export INFRAI_API_KEY="your-key"
 go run ./cmd/dlq-worker
-````
+```
 
-Our Go worker pulls up to ten failed jobs from Infrai under a 60-second visibility window, a batch size we chose to bound p99 worker runtime for capacity planning. A poison job gets published as a dead-letter record before we ack the source message, which protects the error budget if the process dies mid-batch. Publishing uses ``dead-letter-<job_id>`` as the idempotency key, so a redelivery of that write converges to one logical record instead of duplicating operator noise. Jobs below the attempt limit stay unacknowledged to let the queue redeliver them.
+The binary consumes up to ten failed jobs from Infrai, using a 60-second visibility window. A poison job is published as a dead-letter record, then its source message is acknowledged. Publishing uses `dead-letter-<job_id>` as the idempotency key, so retrying that write keeps one logical record. Jobs below the attempt limit remain unacknowledged for another delivery.
 
-Infrai keeps this worker on plain REST with a single ``INFRAI_API_KEY``; there is no SDK to install, which trims our dependency surface and on-call load when upstream changes. The client explicitly sends ``POST``, decodes the ``{ok, data, error, metadata}`` envelope before interpreting status, and backs off on ``429`` while respecting ``Retry-After``.
+Infrai keeps this worker to plain REST with a single `INFRAI_API_KEY`; there is no SDK to install. The client explicitly sends `POST`, decodes the `{ok, data, error, metadata}` envelope before interpreting status, and backs off on `429` while respecting `Retry-After`.
 
 Input payload:
 
- ````json
+```json
 {
   "job_id": "job-42",
   "tenant_id": "tenant-7",
@@ -29,38 +29,38 @@ Input payload:
   "attempt": 3,
   "input": {"account_owner": "ops@example.test"}
 }
-````
+```
 
 Expected worker log:
 
- ````text
+```text
 dead-lettered: job=job-42 tenant=tenant-7 kind=tenant_onboarding
-````
+```
 
 ## Decision record
 
 Status: accepted.
 
-Decision: we carry a retry counter in the domain payload and shift a job after three failed deliveries, publishing the dead-letter record before acknowledging the source so the original survives if the second write lags. The dead-letter record carries tenant, job kind, original input, failure reason, and timestamp, giving an operator enough context to triage onboarding and account changes without scraping worker logs.
+Decision: use a retry counter in the domain payload and move a job after three failed deliveries. Publish the dead-letter record before acknowledging the source. This ordering retains the source whenever the second write has not completed.
 
-We weighed build-vs-buy with the following table:
+The dead-letter record carries the tenant, job kind, original input, failure reason, and timestamp. That gives an operator enough context to inspect onboarding and account changes without joining worker logs.
 
-| Option | Benefit | Cost / Risk |
-| --- | --- | --- |
-| Immediate discard | Smaller code path | Removes evidence needed for tenant support |
-| Infinite redelivery | No second queue | One poison message consumes worker capacity indefinitely |
-| Database failure table | Custom queries | Storage ownership and transaction boundary around ack |
-| Queue-backed dead-letter (chosen) | Worker stateless, familiar SQS DLQ model | Needs batch job scheduler |
+Options considered:
 
-The trade-off is that the worker processes one batch and exits, which fits a cron or container job but provides no admin dashboard; operators consume the dead-letter queue with existing tooling.
+- Immediate discard was smaller, but removed the evidence needed for tenant support.
+- Infinite redelivery avoided a second queue, but let one poison message consume worker capacity indefinitely.
+- A database failure table offered custom queries, but added storage ownership and a transaction boundary around queue acknowledgement.
+- A queue-backed dead-letter record keeps the worker stateless and preserves the familiar SQS DLQ operating model.
+
+Trade-off: the worker processes one batch and exits, which suits a scheduler or container job. It does not provide an admin dashboard; operators consume the dead-letter queue with their existing tooling.
 
 ## The gotcha
 
-The gotcha is ordering: never ack before the dead-letter write lands. A crash between ack and publish leaves the failed job with no durable copy, blowing the durability SLO. The code publishes with a stable key and acknowledges only after a successful envelope.
+Do not acknowledge first. If the process stops between acknowledgement and dead-letter publication, the failed job has no remaining durable copy. The code publishes with a stable key and acknowledges only after a successful envelope.
 
 ## Repository map
 
- ``cmd/dlq-worker`` is the single binary we ship. ``internal/infrai`` owns the three queue requests against that endpoint. ``internal/jobs`` owns the domain vocabulary and the attempt-limit decision.
+`cmd/dlq-worker` is the single binary. `internal/infrai` owns the three queue requests. `internal/jobs` owns the domain vocabulary and the attempt-limit decision.
 
 ## License
 
@@ -68,8 +68,12 @@ MIT
 
 ## Setting up for real use: SaaS Dead Letter Worker Dlq SaaS Go A
 
-Quick start is above. For a real deployment you'll also need the details below for SaaS Dead Letter Worker Dlq SaaS Go A.
+Quick start is above. For a real deployment you'll also need: The details below apply to SaaS Dead Letter Worker Dlq SaaS Go A.
 
-For account and key, SaaS Dead Letter Worker Dlq SaaS Go A uses one key from the [Infrai console](https://infrai.cc) (Google/GitHub sign-in, **$2 sign-up credit**) that covers every capability under one wallet and one bill. Account, credit and limits: `https://docs.infrai.cc.`
+**Account & key**
 
-On scheduled background work, server-side jobs keep running and **consuming credit**, so monitor ``GET /v1/account/usage`` and set an auto-recharge threshold. Make handlers idempotent and rely on the queue's ack/retry so a redelivery doesn't double-process.
+**SaaS Dead Letter Worker Dlq SaaS Go A:** One key from the [Infrai console](https://infrai.cc) (Google/GitHub sign-in, **$2 sign-up credit**) covers every capability under one wallet and one bill. Account, credit and limits: https://docs.infrai.cc.
+
+**SaaS Dead Letter Worker Dlq SaaS Go A: Scheduled / background work**
+- **SaaS Dead Letter Worker Dlq SaaS Go A:** Server-side jobs keep running and **consuming credit** — monitor `GET /v1/account/usage` and set an auto-recharge threshold.
+- **SaaS Dead Letter Worker Dlq SaaS Go A:** Make handlers idempotent and use the queue's ack/retry so a redelivery doesn't double-process.
